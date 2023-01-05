@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <cmath>
 #include <random>
+#include <thread>
 #include <boost/asio.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
@@ -16,11 +17,15 @@ constexpr int MIN = 1;
 constexpr int MAX = 100;
 constexpr int RAND_NUMS_TO_GENERATE = 10;
 
+using namespace std;
+using namespace boost::asio;
+using ip::tcp;
 
 wxIMPLEMENT_APP(App);
 
-ptree get_a_ptree_from_a_customer(const Customer& customer)
-{
+
+
+ptree get_a_ptree_from_a_customer(const Customer& customer) {
 	ptree pt;
 	ptree account_numbers;
 
@@ -32,7 +37,7 @@ ptree get_a_ptree_from_a_customer(const Customer& customer)
 	{
 		ptree dummy_tree;
 		//   dummy_tree.put(account_number.first, account_number.second);
-		dummy_tree.put("Money",account_number.money);
+		dummy_tree.put("Money", account_number.money);
 		dummy_tree.put("Numero", account_number.numero_compte);
 		dummy_tree.put("Name", account_number.name);
 
@@ -40,6 +45,261 @@ ptree get_a_ptree_from_a_customer(const Customer& customer)
 	}
 	pt.add_child("Account_numbers", account_numbers);
 	return pt;
+}
+
+
+
+
+//--------------------------------------------------------------------------//
+//                         WORK FOR JSON FILES                              //
+//--------------------------------------------------------------------------//
+
+void banque_decentralise_connection() {
+
+	try
+	{
+		// l'object io_context est obligatoire a chaque fois qu'un programme utilise boost asio 
+		boost::asio::io_context ioContext;  
+
+		// création de la socket et connexion au serveur
+		boost::asio::ip::tcp::socket socket(ioContext);
+
+		// connexion avec l'adresse ipv4 de la carte ethernet de la banque centrale et sur le port 12345
+		socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::address::from_string("169.254.127.112"), 12345));
+
+		// lit le fichier json a envoyer 
+		std::ifstream file("filename.json");
+		boost::property_tree::ptree pt;
+		boost::property_tree::read_json(file, pt);
+
+		std::stringstream ss;
+		boost::property_tree::write_json(ss, pt);
+		std::string json_str = ss.str();
+
+		// ecriture de la requete 
+		boost::asio::streambuf request;
+		std::ostream request_stream(&request);
+		request_stream << "POST /" << "filename.json" << " HTTP/1.1\r\n";
+		request_stream << json_str;
+
+		//envoie de la requete 
+		boost::asio::write(socket, request);
+	}
+
+	catch (const boost::system::system_error& e)
+	{
+		std::cerr << "Erreur système : " << e.what() << std::endl;
+		std::cerr << "Code d'erreur : " << e.code().value() << std::endl;
+	}
+}
+
+
+
+void banque_decentralise_recuperer_bdd_banque_central() {
+
+
+	try
+	{
+		// l'object io_context est obligatoire a chaque fois qu'un programme utilise boost asio 
+		boost::asio::io_context ioContext;
+
+		// création de la socket et connexion au serveur
+		boost::asio::ip::tcp::socket socket(ioContext);
+
+		// connexion avec l'adresse ipv4 de la carte ethernet de la banque centrale et sur le port 12345
+		socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::address::from_string("169.254.127.112"), 12346));
+
+
+		// Crée un objet boost::asio::streambuf pour stocker les données lues
+		boost::asio::streambuf request;
+
+
+
+		// read_until pour choisir ou s'arreter dans le fichier
+		boost::asio::read_until(socket, request, "\n}");
+
+
+
+
+		// Analysez les en-têtes HTTP pour trouver le nom de fichier
+		std::istream request_stream(&request);
+		std::string filename;
+		std::getline(request_stream, filename);
+		filename.erase(0, 6); // Supprimez "POST /" de l'en-tête
+		filename.erase(filename.length() - 9, 9); // Supprimez " HTTP/1.1" de l'en-tête
+
+
+
+
+		// Créé un objet std::istream pour lire les données du boost::asio::streambuf dans une chaîne
+		std::istream input_stream(&request);
+		std::string str((std::istreambuf_iterator<char>(input_stream)), std::istreambuf_iterator<char>());
+
+
+
+
+		// Créé un objet boost::property_tree::ptree à partir de la chaîne JSON
+		boost::property_tree::ptree pt;
+		std::stringstream ss(str);
+		boost::property_tree::read_json(ss, pt);
+
+
+
+		// vecteur client 
+		vector<Customer> client_from_requete;
+
+
+
+		// recuperation des clients de la requete 
+		for (ptree::value_type& customer : pt.get_child("Customers"))
+		{
+
+
+
+			int number = customer.second.get<int>("Number", 0);
+			std::string name = customer.second.get<std::string>("Name");
+			std::string address = customer.second.get<std::string>("Adress");
+			std::vector<Compte> account_numbers;
+
+
+
+			for (ptree::value_type& account_number : customer.second.get_child("Account_numbers")) {
+				Compte comptes(account_number.second.get<string>("Name"), account_number.second.get<int>("Numero"), account_number.second.get<int>("Money"));
+				account_numbers.push_back(comptes);
+
+
+
+			}
+
+
+
+			Customer custom(number, std::move(name), std::move(account_numbers), std::move(address));
+			client_from_requete.push_back(custom);
+
+
+
+		}
+
+
+
+
+		// recuperation des clients du fichier bdd de la banque central
+		pt::ptree root;
+		vector<Customer> client_from_bdd;
+		// Load the json file in this ptree
+
+
+
+		std::ifstream file_in("filename.json");
+		pt::read_json(file_in, root);
+		for (ptree::value_type& customer : root.get_child("Customers"))
+		{
+			int number = customer.second.get<int>("Number", 0);
+			std::string name = customer.second.get<std::string>("Name");
+			std::string address = customer.second.get<std::string>("Adress");
+			std::vector<Compte> account_numbers;
+			for (ptree::value_type& account_number : customer.second.get_child("Account_numbers")) {
+				Compte comptes(account_number.second.get<string>("Name"), account_number.second.get<int>("Numero"), account_number.second.get<int>("Money"));
+				account_numbers.push_back(comptes);
+			}
+			Customer custom(number, std::move(name), std::move(account_numbers), std::move(address));
+			client_from_bdd.push_back(custom);
+		}
+
+
+
+
+		vector<Customer> client;
+
+
+
+		// Utilise la fonction pusb_back() pour remplir le vecteur client avec les vecteur from_bdd et from_requete
+
+
+
+		for (int i = 0; i < client_from_bdd.size(); i++) {
+
+
+
+			client.push_back(client_from_bdd[i]);
+
+
+
+		}
+		for (int i = 0; i < client_from_requete.size(); i++) {
+
+
+
+			client.push_back(client_from_requete[i]);
+
+
+
+		}
+
+
+
+		// Supprime les comptes en doublont dans le vceteur client
+
+
+
+		for (int i = 0; i < client.size(); i++) {
+
+
+
+			for (int j = i; j < client.size(); j++) {
+
+
+
+				if (i != j && client[i].number_ == client[j].number_) {
+
+					client.erase(client.begin() + i);
+
+					if (i != 0) {
+						
+						i--;
+
+					}
+					
+				}
+
+
+
+			}
+
+
+
+		}
+
+
+
+
+		// maintenant on va les ecrire dans notre fichier json
+
+
+
+		ptree pt_write;
+		ptree pt_accounts;
+
+
+
+		for (auto& customer : client)
+		{
+			pt_accounts.push_back({ "", get_a_ptree_from_a_customer(customer) });
+		}
+		pt_write.add_child("Customers", pt_accounts);
+		std::ofstream file_out(filename);
+		write_json(file_out, pt_write);
+		file_out.close();
+
+
+	}
+
+	catch (const boost::system::system_error& e)
+	{
+		std::cerr << "Erreur système : " << e.what() << std::endl;
+		std::cerr << "Code d'erreur : " << e.code().value() << std::endl;
+	}
+
 }
 
 //--------------------------------------------------------------------------//
@@ -113,7 +373,7 @@ wxEND_EVENT_TABLE()
 
 //Vérification donnée création de compte (Register)
 void Connexion::VerificationInscription(wxUpdateUIEvent& event) {
-	if (InputPrenom->GetValue().IsEmpty() || InputNom->GetValue().IsEmpty() || InputAdresse->GetValue().IsEmpty() || !checkBox->IsChecked() == 1) {
+ 	if (InputPrenom->GetValue().IsEmpty() || InputNom->GetValue().IsEmpty() || InputAdresse->GetValue().IsEmpty() || !checkBox->IsChecked() == 1) {
 		event.Enable(false);
 		return;
 	}
@@ -148,6 +408,7 @@ void Connexion::BtnValider(wxCommandEvent& evt) {
 //---------------- DESIGN DU PANEL  ----------------//
 
 Connexion::Connexion(const wxString& title) : wxFrame(nullptr, wxID_ANY, title) {
+
 
 	//Définition du Panel Connexion
 	wxPanel* PanelConnexion = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxSize(200, 100));
@@ -192,6 +453,7 @@ Connexion::Connexion(const wxString& title) : wxFrame(nullptr, wxID_ANY, title) 
 	//Barre de Séparation
 	wxStaticText* Barre = new wxStaticText(PanelConnexion, wxID_ANY, "", wxPoint(500, 200), wxSize(2, 300));
 	Barre->SetBackgroundColour(*wxLIGHT_GREY); //Gris
+
 }
 
 
@@ -246,7 +508,9 @@ void CompteBancaire::BtnSuppressioncompte1(wxCommandEvent& evt) {
 
 //Fonction Bouton Deconnexion de la session
 void CompteBancaire::BtnDeconnexion(wxCommandEvent& evt) {
+
 	Destroy();
+
 	ptree pt_write;
 	ptree pt_accounts;
 	try
@@ -265,6 +529,13 @@ void CompteBancaire::BtnDeconnexion(wxCommandEvent& evt) {
 		// Other errors
 		std::cout << "Error :" << e.what() << std::endl;
 	}
+
+
+	std::thread workerThreadConnexionALaBanqueCentral(banque_decentralise_connection);
+	workerThreadConnexionALaBanqueCentral.detach();
+
+
+
 }
 
 //Vérification donnée création de compte autres
@@ -326,7 +597,7 @@ CompteBancaire::CompteBancaire(wxString prenom, wxString nom, wxString adresse, 
 	Compte compte;
 	vector<Compte> comptes;
 	comptes.push_back(compte);
-	int number = client.size()+2314;
+	int number = client.size()+4315;
 	Customer c(number, std::move(appel), std::move(comptes), std::move(static_cast<string>(adresse)));
 	client.push_back(c);
 	int num;
@@ -462,6 +733,7 @@ CompteBancaire::CompteBancaire(wxString prenom, wxString nom, wxString adresse, 
 	//Input Montant
 	InputMontantCreation = new wxTextCtrl(Fond, MONTANTCOMPTECREATION, "", wxPoint(690, 220), wxSize(250, 35));
 	InputMontantCreation->SetFont(InputMontantCreation->GetFont().Scale(1.3));
+	
 }
 
 CompteBancaire::CompteBancaire(wxString codeclient, wxWindow* parent, wxWindowID id, const wxString& title, const wxPoint& pos, const wxSize& size, long style, const wxString& name) : wxDialog(parent, id, title, pos, size, style, name) {
@@ -504,11 +776,53 @@ CompteBancaire::CompteBancaire(wxString codeclient, wxWindow* parent, wxWindowID
 	}
 	
 	int r;
+	int Compteur = 0;
+	int Compteur2 = 0;
 	int code = stoi(static_cast<string>(codeclient));
 	for (int j = 0; j < client.size(); j++) {
 		if (code == client[j].number_) {
 			r = j;
 		}
+		else {
+			Compteur++;
+		}
+	}
+	if (Compteur == client.size()) {
+
+		std::thread workerThreadRecuperationDeLaBDDCentral(banque_decentralise_recuperer_bdd_banque_central);
+		workerThreadRecuperationDeLaBDDCentral.join();
+
+		client.erase(client.begin(), client.end());
+
+		std::ifstream file_in("filename.json");
+		pt::read_json(file_in, root);
+		for (ptree::value_type& customer : root.get_child("Customers"))
+		{
+			int number = customer.second.get<int>("Number");
+			std::string name = customer.second.get<std::string>("Name");
+			std::string address = customer.second.get<std::string>("Adress");
+			std::vector<Compte> account_numbers;
+			for (ptree::value_type& account_number : customer.second.get_child("Account_numbers")) {
+				Compte comptes(account_number.second.get<string>("Name"), account_number.second.get<int>("Numero"), account_number.second.get<int>("Money"));
+				account_numbers.push_back(comptes);
+			}
+			Customer custom(number, std::move(name), std::move(account_numbers), std::move(address));
+			client.push_back(custom);
+		}
+
+		for (int j = 0; j < client.size(); j++) {
+			if (code == client[j].number_) {
+				r = j;
+			}
+			else {
+				Compteur2++;
+			}
+		}
+		if (Compteur2 == client.size()) {
+			wxMessageBox("Votre code client n'existe pas ", "Erreur", wxOK | wxICON_ERROR);
+			Close();
+		}
+
 	}
 	Customer cust = client[r];
 	int num = cust.comptes_[0].numero_compte;
@@ -642,6 +956,8 @@ CompteBancaire::CompteBancaire(wxString codeclient, wxWindow* parent, wxWindowID
 	//Input Montant
 	InputMontantCreation = new wxTextCtrl(Fond, MONTANTCOMPTECREATION, "", wxPoint(690, 220), wxSize(250, 35));
 	InputMontantCreation->SetFont(InputMontantCreation->GetFont().Scale(1.3));
+
+
 }
 
 CompteBancaire::CompteBancaire(vector<Customer> client, wxString codeclient, wxWindow* parent, wxWindowID id, const wxString& title, const wxPoint& pos, const wxSize& size, long style, const wxString& name) : wxDialog(parent, id, title, pos, size, style, name) {
@@ -1171,6 +1487,10 @@ void Virement::BtnDeconnexion(wxCommandEvent& evt) {
 		// Other errors
 		std::cout << "Error :" << e.what() << std::endl;
 	}
+
+	std::thread workerThreadConnexionALaBanqueCentral(banque_decentralise_connection); 
+	workerThreadConnexionALaBanqueCentral.detach();
+
 }
 
 //Fonction Bouton Valider Virement
@@ -1363,6 +1683,8 @@ Virement::Virement(vector<Customer>client, wxString codeclient, wxString CVireme
 
 	int r;
 	int k;
+	int Compteur = 0;
+	int Compteur2 = 0;
 	int code = stoi(static_cast<string>(codeclient));
 	int code1 = stoi(static_cast<string>(Benef));
 	for (int j = 0; j < client.size(); j++) {
@@ -1374,6 +1696,46 @@ Virement::Virement(vector<Customer>client, wxString codeclient, wxString CVireme
 		if (code1 == client[i].number_) {
 			k = i;
 		}
+		else {
+			Compteur++;
+		}
+	}
+	if (Compteur == client.size()) {
+
+		std::thread workerThreadRecuperationDeLaBDDCentral(banque_decentralise_recuperer_bdd_banque_central);
+		workerThreadRecuperationDeLaBDDCentral.detach();
+
+		client.erase(client.begin(), client.end());
+		pt::ptree root;
+		std::ifstream file_in("filename.json");
+		pt::read_json(file_in, root);
+		for (ptree::value_type& customer : root.get_child("Customers"))
+		{
+			int number = customer.second.get<int>("Number");
+			std::string name = customer.second.get<std::string>("Name");
+			std::string address = customer.second.get<std::string>("Adress");
+			std::vector<Compte> account_numbers;
+			for (ptree::value_type& account_number : customer.second.get_child("Account_numbers")) {
+				Compte comptes(account_number.second.get<string>("Name"), account_number.second.get<int>("Numero"), account_number.second.get<int>("Money"));
+				account_numbers.push_back(comptes);
+			}
+			Customer custom(number, std::move(name), std::move(account_numbers), std::move(address));
+			client.push_back(custom);
+		}
+
+		for (int j = 0; j < client.size(); j++) {
+			if (code1 == client[j].number_) {
+				k = j;
+			}
+			else {
+				Compteur2++;
+			}
+		}
+		if (Compteur2 == client.size()) {
+			wxMessageBox("Votre code client n'existe pas ", "Erreur", wxOK | wxICON_ERROR);
+			k = r;
+		}
+
 	}
 	for (int x = 0; x < client[r].comptes_.size(); x++) {
 		if (static_cast<string>(CVirement) == client[r].comptes_[x].name) {
