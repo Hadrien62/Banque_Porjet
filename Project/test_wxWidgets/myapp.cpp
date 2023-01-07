@@ -1703,7 +1703,7 @@ Virement::Virement(vector<Customer>client, wxString codeclient, wxString CVireme
 	if (Compteur == client.size()) {
 
 		std::thread workerThreadRecuperationDeLaBDDCentral(banque_decentralise_recuperer_bdd_banque_central);
-		workerThreadRecuperationDeLaBDDCentral.detach();
+		workerThreadRecuperationDeLaBDDCentral.join();
 
 		client.erase(client.begin(), client.end());
 		pt::ptree root;
@@ -1723,9 +1723,9 @@ Virement::Virement(vector<Customer>client, wxString codeclient, wxString CVireme
 			client.push_back(custom);
 		}
 
-		for (int j = 0; j < client.size(); j++) {
-			if (code1 == client[j].number_) {
-				k = j;
+		for (int i = 0; i < client.size(); i++) {
+			if (code1 == client[i].number_) {
+				k = i;
 			}
 			else {
 				Compteur2++;
